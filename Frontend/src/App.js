@@ -116,7 +116,7 @@ const  App=()=> {
     
     const queryParams = new URLSearchParams(recipeInputs).toString();
     
-    const url = `http://localhost:5000/api/generate-recipe?${queryParams}`;
+    const url = `https://cooklens-smartrecipegenerator.onrender.com/api/generate-recipe?${queryParams}`;
     eventSourceRef.current = new EventSource(url);
 
     eventSourceRef.current.onmessage = (event) => {
