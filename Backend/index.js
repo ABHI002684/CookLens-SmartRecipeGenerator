@@ -8,6 +8,7 @@ const cors = require('cors');
 app.use(express.json());
 app.use(cors({
   origin: "http://localhost:3000",
+  "https://cooklens-smartrecipegenerator-1.onrender.com",
 }));
 app.use('/api',recipeRoutes);
 
