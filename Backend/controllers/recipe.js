@@ -1,106 +1,95 @@
 const dotenv = require("dotenv");
 dotenv.config();
-const { OpenAI } = require("openai");
-const fetchFromOpenAi = async (messages, callback) => {
-  const openai = new OpenAI({ apiKey: process.env.API_KEY });
-  const aiModel = "gpt-4-1106-preview";
 
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+async function fetchFromGemini(prompt, callback) {
   try {
-    const completion = await openai.chat.completions.create({
-      model: aiModel,
-      messages: messages,
-      stream: true,
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 2048,
+      },
     });
 
-    for await (const chunk of completion) {
-      callback(chunk);
+    const result = await model.generateContentStream({
+      contents: [{ role: "user", parts: [{ text: prompt }]}]
+    });
+
+    for await (const chunk of result.stream) {
+      const text = chunk.text();
+      if (text) callback(text);
     }
-  } catch (err) {
-    console.error("Error fetching from OpenAI:", err);
+  } catch (error) {
+    console.error("Gemini API Error:", error);
   }
-};
+}
+
 const recipeStream = async (req, res) => {
   try {
-    const ingredients = req.body.ingredients;
-    const mealType = req.body.mealType;
-    const dietaryPreferences = req.body.dietaryPreferences;
-    const cuisine = req.body.cuisine;
-    
+    const { ingredients, mealType, dietaryPreferences, cuisine } = req.query;
+
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    const sendEvent = (data) => {
-      let dataResponse;
+    const prompt = `
+You are a Smart Recipe Generator.
 
-      if (data.choices[0].final_reason === "stop") {
-        res.write(`data:${JSON.stringify({ action: "done" })}\n\n`);
-      } else {
-        if (
-          data.choices[0].delta.role &&
-          data.choices[0].delta.role === "assistant"
-        ) {
-          dataResponse = {
-            action: "start",
-          };
-        } else {
-          dataResponse = {
-            action: "chunk",
-            data: data.choices[0].delta.content,
-          };
-        }
+Return the response in THIS EXACT ORDER:
 
-        res.write(`data:${JSON.stringify(dataResponse)}\n\n`);
-      }
-    };
+1. Identified Ingredients
+2. Matched Recipes
+3. Dietary Compatibility
+4. Serving Size Options
+5. User Tips
+6. Confidence Score
 
-    const prompt = [];
-    prompt.push(`You are a Smart Recipe Generator API.  
+You are a Smart Recipe Generator.
 
-Your job is to analyze the user's inputs and return strictly valid JSON containing:
+Return the response in THIS EXACT ORDER and ensure each section starts on a NEW LINE:
 
-1. identifiedIngredients: array of ingredients detected from user input
-2. matchedRecipes: array of recipe objects, each containing:
-   - title
-   - ingredients (list)
-   - substitutions (key-value pairs)
-   - instructions (step-by-step list)
-   - cookingTime (in minutes)
-   - difficulty (easy | medium | hard)
-   - cuisine
-   - nutritionalInfo:
-       - calories
-       - protein
-       - carbs
-       - fat
-3. dietaryCompatibility: explanation of whether the recipe follows the given dietary preference (veg, vegan, gluten-free, etc.)
-4. servingSizeOptions: suggested quantities when servings are changed
-5. userTips: additional improvements or customization tips
-6. confidenceScore: how confident you are (0–1)
+1. Identified Ingredients
+2. Matched Recipes
+3. Dietary Compatibility
+4. Serving Size Options
+5. User Tips
+6. Confidence Score
+
+VERY IMPORTANT:
+- Use clear NEWLINES between sections.
+- Use newline after every bullet.
+- Use newline after every instruction step.
+- Do NOT merge sections into a single line.
+
+Output must be plain text with proper line breaks.
 
 User Input:
-- Ingredients: ${{ ingredients }}
-- Dietary preference: ${{ dietaryPreferences }}
-- Filters:
-   - cuisine: ${{ cuisine }}
-   - mealType: ${{ mealType }}
-Rules:
-- Only return JSON.  
-- Do NOT include markdown.  
-- Do NOT explain anything outside the JSON.  
-- If some information is missing, infer logically.  
-- Return 3 to 5 best matching recipes.  `);
-    const messages = {
-      role: "system",
-      content: prompt.join(","),
-    };
+Ingredients: ${ingredients}
+Meal Type: ${mealType}
+Dietary Preferences: ${dietaryPreferences}
+Cuisine: ${cuisine}
+`;
 
-    fetchFromOpenAi(messages, sendEvent);
-    req.on("close", () => {
-      res.end();
+    fetchFromGemini(prompt, (chunk) => {
+      // 🔥 Split each chunk into lines before sending to the frontend
+      const lines = chunk.split("\n").filter((line) => line.trim() !== "");
+
+      lines.forEach((line) => {
+        res.write(
+          `data: ${JSON.stringify({ action: "chunk", data: line })}\n\n`
+        );
+      });
     });
-  } catch (err) {
-    console.error("Error generating recipe stream:", err);
-    res.status(500).json({ error: "Failed to generate recipe stream" });
+
+    req.on("close", () => res.end());
+  } catch (error) {
+    console.error("Error generating recipe:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 };
+
+module.exports = { recipeStream };
